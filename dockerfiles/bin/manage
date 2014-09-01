@@ -1,0 +1,72 @@
+#!/bin/bash
+#set -e;
+
+# ip=$(netstat -nr | grep '^0\.0\.0\.0' | awk '{print $2}')
+
+ip=$REDIS_PORT_6379_TCP_ADDR
+port=$REDIS_PORT_6379_TCP_PORT
+
+_client () {
+  redis-cli -h $ip -p $port $*
+}
+
+case "$1" in
+  start)
+    /usr/bin/redis-server /etc/redis/redis.conf
+  ;;
+
+  init)
+    chown -R redis:redis /var/lib/redis
+    chmod -R 700 /var/lib/redis
+
+  ;;
+  flushall)
+    _client FLUSHALL
+
+  ;;
+  dbsize)
+    _client DBSIZE
+
+  ;;
+  del)
+    _client DEL "$2"
+
+  ;;
+  get)
+    _client GET "$2"
+
+  ;;
+  set)
+    _client SET "$2" "$3"
+
+  ;;
+  info)
+    _client INFO
+
+  ;;
+  monitor)
+    _client MONITOR
+
+  ;;
+  ping)
+    _client PING
+
+  ;;
+  save)
+    _client SAVE
+
+  ;;
+  keys)
+    redis-cli -h $ip -p $port keys "$2"
+
+  ;;
+  admin_console)
+    _client
+  ;;
+  bash)
+    bash
+  ;;
+  cmd)
+    bash -c "$2"
+  ;;
+esac

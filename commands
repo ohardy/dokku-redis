@@ -1,0 +1,341 @@
+#!/bin/bash
+#set -e;
+
+_path=".o_redis"
+version="1.0"
+db_image="ohardy/redis"
+
+APP=$2
+OLDHOME=$HOME
+HOME="$DOKKU_ROOT/$_path"
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+check_app() {
+  if [[ -z "$APP" ]]; then
+    echo "You must specify an app name"
+    exit 1
+  fi
+}
+
+check_container() {
+  if [[ -z "$id" ]]; then
+    echo "Redis container not started cannot continue. Start with dokku redis:start"
+    exit 1
+  fi
+}
+
+load_ip_and_container() {
+  id=$(docker ps | grep "$db_image":latest | grep "manage start" | awk '{print $1}')
+  container_name=""
+  if [[ -n "$id" ]]; then
+    ip_and_port=$(docker port ${id} 6379)
+    ip=$(echo "$ip_and_port" | cut -d ':' -f 1)
+    private_ip=$(docker inspect ${id} | grep IPAddress | awk '{ print $2 }' | tr -d ',"')
+    port=$(echo "$ip_and_port" | cut -d ':' -f 2)
+    container_name=$(docker inspect -f "{{ .Name }}" $id)
+  fi
+
+  if [[ -n "$container_name" ]]; then
+    _manage="-v $HOME/shared:/shared --link $container_name:redis $db_image"
+  else
+    _manage="-v $HOME/shared:/shared $db_image"
+  fi
+}
+
+manage() {
+  docker run -t -i $_manage $*
+}
+
+do_bash() {
+  _envs=$(env_for)
+  _cmd="docker run -t -i $_envs $db_image bash"
+  echo "$_cmd"
+  $_cmd
+}
+
+db_url() {
+  echo "redis://${private_ip}:${port}"
+}
+
+migrate() {
+  :
+}
+
+env_for() {
+  _url=$(db_url)
+
+  if [[ -n "$_url" ]]; then
+    echo "-e REDIS_URL=$_url -e REDIS_HOST=$private_ip -e REDIS_PORT=$port"
+  fi
+}
+
+restart_app() {
+  _app=$1
+  if [[ -n "$_app" ]]&&[[ -d "$DOKKU_ROOT/$_app" ]]; then
+    echo "-----> Restarting application : $_app"
+    dokku release $_app
+    dokku deploy $_app
+  fi
+}
+
+restart_apps() {
+  echo "-----> Restarting applications"
+  _apps=()
+
+  cd "$HOME"
+  _files=$(ls pass_* 2> /dev/null)
+  for f in $_files; do
+    _apps+=($(echo "$f" | cut -d _ -f 2))
+  done
+
+  _files=$(ls link_* 2> /dev/null)
+  for f in $_files; do
+    _apps+=($(cat "$HOME/$f"))
+  done
+
+  _apps=$(echo "${_apps[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' ')
+  for _app in $_apps; do
+    restart_app $_app
+  done
+}
+
+load_ip_and_container
+
+case "$1" in
+  redis:admin_console)
+    check_container
+
+    manage admin_console
+    ;;
+
+  redis:flushall)
+    check_container
+
+    manage flushall
+    ;;
+
+  redis:dbsize)
+    check_container
+
+    manage dbsize
+    ;;
+
+  redis:del)
+    check_container
+
+    manage del $2
+    ;;
+
+  redis:get)
+    check_container
+
+    manage get $2
+    ;;
+
+  redis:set)
+    check_container
+
+    manage set $2 $3
+    ;;
+
+  redis:info)
+    check_container
+
+    manage info
+    ;;
+
+  redis:monitor)
+    check_container
+
+    manage monitor
+    ;;
+
+  redis:ping)
+    check_container
+
+    manage ping
+    ;;
+
+  redis:save)
+    check_container
+
+    manage save
+    ;;
+
+  redis:keys)
+    check_container
+
+    if [[ -z "$2" ]]; then
+      docker run -t -i $_manage keys "*"
+    else
+      docker run -t -i $_manage keys "$2"
+    fi
+    ;;
+
+  redis:url)
+    check_container
+
+    db_url
+    ;;
+
+  redis:bash)
+    do_bash
+    ;;
+
+  redis:pre_build)
+    if [[ -z "$id" ]]; then
+      if [[ -d "$DOKKU_ROOT/$APP" ]]; then
+        if [[ -n "$DOKKU_DEV" ]]; then
+          ./commands redis:start
+        else
+          dokku redis:start
+        fi
+
+        sleep 5
+      fi
+    fi
+
+    ;;
+
+  redis:start)
+    if [[ "$id" != "" ]]; then
+      echo "Redis container already running with ID: ${id}"
+    else
+      echo "-----> Starting Redis server"
+      docker run -d -p 127.0.0.1:6379:6379 -v "$HOME/data":"/var/lib/redis" "$db_image" start
+    fi
+    ;;
+
+  redis:restart)
+    if [[ ! -z "$DOKKU_DEV" ]]; then
+      ./commands redis:stop
+      ./commands redis:start
+    else
+      dokku redis:stop
+      dokku redis:start
+    fi
+    ;;
+
+  redis:init)
+    if [[ "$id" != "" ]]; then
+      echo "Redis container already running with ID: ${id}"
+    else
+      docker run -d -p 127.0.0.1:6379:6379 -v "$HOME/data":"/var/lib/redis" "$db_image" init "$admin_pw"
+    fi
+    ;;
+
+  redis:stop)
+    check_container
+    echo "-----> Stopping Redis server"
+    dokku redis:save
+    docker stop ${id}
+    ;;
+
+  redis:dump)
+    check_container
+
+    dokku redis:save &> /dev/null
+
+    if [[ -e "$HOME/data/dump.rdb" ]]; then
+      cat "$HOME/data/dump.rdb"
+    fi
+    ;;
+
+  redis:restore)
+    check_container
+
+    dokku redis:stop
+
+    name=$(openssl rand -base64 32|base64)
+    while read -r line
+    do
+      echo "$line" >> "$HOME/shared/$name"
+    done
+
+    mv "$HOME/shared/$name" "$HOME/data/dump.rdb"
+
+    dokku redis:start
+    ;;
+
+  redis:status)
+    if [[ "$id" != "" ]]; then
+      echo "Redis container running with ID: ${id}"
+    else
+      echo "Redis container not running"
+    fi
+    ;;
+
+  redis:migrate)
+    migrate
+    ;;
+
+  redis:env)
+    env_for
+    ;;
+
+  redis:install)
+    if [[ -d "$HOME" ]]; then
+      migrate
+      echo "Redis data already exist in "$HOME", installation aborded "
+    fi
+
+    if [[ ! -d "$HOME" ]]; then
+      mkdir -p "$HOME/data"
+      mkdir -p "$HOME/shared"
+
+      echo "$version" > "$HOME/version"
+
+      docker run "$db_image" cmd "cd /var/lib/redis && tar -cp ./" | tar -x -C "$HOME/data/" -f -
+      docker run "$db_image" cmd "rm -rf /var/lib/redis && mkdir -p /var/lib/redis"
+      docker run "$db_image" cmd "chown -R redis:redis /var/lib/redis"
+
+      chown -R dokku: "$HOME"
+
+      if [[ ! -z "$DOKKU_DEV" ]]; then
+        ./commands redis:init
+      else
+        dokku redis:init
+      fi
+    fi
+    ;;
+  redis:update)
+    if [[ $(id -un) = "dokku" ]]; then
+      dokku plugins-update
+    fi
+
+    if [[ -d "$DIR/.git" ]]; then
+      pushd "$DIR"
+      dokku redis:stop
+      sudo git pull
+      docker rmi "$db_image"
+      docker pull "$db_image"
+      dokku redis:migrate
+      dokku redis:start
+      popd
+    fi
+    ;;
+  help)
+    cat && cat<<EOF
+    redis:flushall
+    redis:dbsize
+    redis:del           <key>
+    redis:get           <key>
+    redis:set           <key> <value>
+    redis:info
+    redis:monitor
+    redis:ping
+    redis:keys          [<pattern>]
+    redis:env                        Get generated environment variables
+    redis:url                        Get REDIS_URL for <app>
+    redis:dump          > dump.rdb   Dump database
+    redis:restore       < dump.rdb   Restore database
+    redis:admin_console              Launch a Redis console as admin user
+    redis:restart                    Restart the Redis docker container and linked app
+    redis:start                      Start the Redis docker container if it isn't running
+    redis:stop                       Stop the Redis docker container
+    redis:status                     Shows status of Redis
+    redis:update                     Update this plugin
+    redis:migrate                    Migrate
+EOF
+    ;;
+esac
