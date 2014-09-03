@@ -2,7 +2,7 @@
 #set -e;
 
 _path=".o_redis"
-version="1.0"
+version="1.1"
 db_image="ohardy/redis"
 
 APP=$2
@@ -36,20 +36,27 @@ load_ip_and_container() {
   fi
 
   if [[ -n "$container_name" ]]; then
-    _manage="-v $HOME/shared:/shared --link $container_name:redis $db_image"
+    _manage="-v $HOME/shared:/shared -v $HOME/data:/var/lib/redis --link $container_name:redis $db_image"
   else
-    _manage="-v $HOME/shared:/shared $db_image"
+    _manage="-v $HOME/shared:/shared -v $HOME/data:/var/lib/redis $db_image"
   fi
 }
 
-manage() {
+manage_ti() {
   docker run -t -i $_manage $*
+}
+
+manage() {
+  docker run $_manage $*
+}
+
+manage_without_link() {
+  docker run -v $HOME/shared:/shared -v $HOME/data:/var/lib/redis $db_image $*
 }
 
 do_bash() {
   _envs=$(env_for)
-  _cmd="docker run -t -i $_envs $db_image bash"
-  echo "$_cmd"
+  _cmd="docker run -t -i -v $HOME/shared:/shared -v $HOME/data:/var/lib/redis $_envs $db_image bash"
   $_cmd
 }
 
@@ -58,7 +65,16 @@ db_url() {
 }
 
 migrate() {
-  :
+  _version=$(cat "$HOME/version")
+  if [[ $_version != "1.1" ]]; then
+    dokku redis:stop
+    docker rmi "$db_image"
+    docker pull "$db_image"
+    dokku redis:start
+  fi
+
+  echo "$version" > $HOME/version
+
 }
 
 env_for() {
@@ -105,7 +121,7 @@ case "$1" in
   redis:admin_console)
     check_container
 
-    manage admin_console
+    manage_ti admin_console
     ;;
 
   redis:flushall)
@@ -147,7 +163,7 @@ case "$1" in
   redis:monitor)
     check_container
 
-    manage monitor
+    manage_ti monitor
     ;;
 
   redis:ping)
@@ -202,8 +218,9 @@ case "$1" in
       echo "Redis container already running with ID: ${id}"
     else
       echo "-----> Starting Redis server"
-      docker run -d -p 127.0.0.1:6379:6379 -v "$HOME/data":"/var/lib/redis" "$db_image" start
+      docker run -d -p 127.0.0.1:6379:6379 -v $HOME/data:/var/lib/redis "$db_image" start
     fi
+    restart_apps
     ;;
 
   redis:restart)
@@ -220,7 +237,7 @@ case "$1" in
     if [[ "$id" != "" ]]; then
       echo "Redis container already running with ID: ${id}"
     else
-      docker run -d -p 127.0.0.1:6379:6379 -v "$HOME/data":"/var/lib/redis" "$db_image" init "$admin_pw"
+      docker run -d -p 127.0.0.1:6379:6379 -v $HOME/data:/var/lib/redis "$db_image" init "$admin_pw"
     fi
     ;;
 
@@ -234,10 +251,15 @@ case "$1" in
   redis:dump)
     check_container
 
+    name=$(openssl rand -base64 32|base64)
+
     dokku redis:save &> /dev/null
 
-    if [[ -e "$HOME/data/dump.rdb" ]]; then
-      cat "$HOME/data/dump.rdb"
+    manage_without_link dump "$name"
+
+    if [[ -f "$HOME/shared/$name" ]]; then
+      cat "$HOME/shared/$name"
+      rm -f "$HOME/shared/$name"
     fi
     ;;
 
@@ -247,12 +269,13 @@ case "$1" in
     dokku redis:stop
 
     name=$(openssl rand -base64 32|base64)
-    while read -r line
-    do
-      echo "$line" >> "$HOME/shared/$name"
-    done
+    cat - > "$HOME/shared/$name"
 
-    mv "$HOME/shared/$name" "$HOME/data/dump.rdb"
+    manage_without_link restore "$name"
+
+    if [[ -f "$HOME/shared/$name" ]]; then
+      rm -f "$HOME/shared/$name"
+    fi
 
     dokku redis:start
     ;;

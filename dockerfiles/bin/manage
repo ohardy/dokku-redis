@@ -20,6 +20,18 @@ case "$1" in
     chmod -R 700 /var/lib/redis
 
   ;;
+
+  dump)
+    filename=$2
+
+    cat /var/lib/redis/dump.rdb > "/shared/$filename"
+    ;;
+  restore)
+    filename=$2
+
+    cat "/shared/$filename" > /var/lib/redis/dump.rdb
+    chmod -R 700 /var/lib/redis
+    ;;
   flushall)
     _client FLUSHALL
 

@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -eo pipefail; [[ $DOKKU_TRACE ]] && set -x
+shopt -s nullglob
+VERSION="$1"
+BASE_DIR="$2"
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+_path=".o_redis"
+_plugin_path="$BASE_DIR/$_path"
+# Generate dump for each app
+
+cd $_plugin_path
+mkdir -p "$_plugin_path/backup"
+
+"$DIR/commands" redis:dump > $_plugin_path/backup/dump.rdb
+
+cat; for f in $(find . -name '*' -and -not -path "./data*" -and -not -name . -nowarn 2>/dev/null); do echo $(readlink -m $f); done
