@@ -218,7 +218,7 @@ case "$1" in
       echo "Redis container already running with ID: ${id}"
     else
       echo "-----> Starting Redis server"
-      docker run -d -p 127.0.0.1:6379:6379 -v $HOME/data:/var/lib/redis "$db_image" start
+      docker run -d -p 127.0.0.1:6379:6379 -v /etc/localtime:/etc/localtime:ro -v $HOME/data:/lib/redis "$db_image" start
     fi
     restart_apps
     ;;
