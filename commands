@@ -2,8 +2,8 @@
 #set -e;
 
 _path=".o_redis"
-version="1.1"
-db_image="ohardy/redis"
+version="1.2"
+db_image="ohardy/redis:latest"
 
 APP=$2
 OLDHOME=$HOME
@@ -25,7 +25,7 @@ check_container() {
 }
 
 load_ip_and_container() {
-  id=$(docker ps | grep "$db_image":latest | grep "manage start" | awk '{print $1}')
+  id=$(docker ps | grep "$db_image" | grep "manage start" | awk '{print $1}')
   container_name=""
   if [[ -n "$id" ]]; then
     ip_and_port=$(docker port ${id} 6379)
