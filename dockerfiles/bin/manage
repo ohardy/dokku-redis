@@ -68,6 +68,10 @@ case "$1" in
     _client SAVE
 
   ;;
+  save)
+    _client SHUTDOWN
+
+  ;;
   keys)
     redis-cli -h $ip -p $port keys "$2"
 

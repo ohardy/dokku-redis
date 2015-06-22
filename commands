@@ -245,6 +245,7 @@ case "$1" in
     check_container
     echo "-----> Stopping Redis server"
     dokku redis:save
+    manage stop
     docker stop ${id}
     ;;
 
